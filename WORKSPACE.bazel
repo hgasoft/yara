@@ -25,13 +25,23 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 # SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-load("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
+# Bazel (http://bazel.io/) WORKSPACE file for YARA.
 
-# BoringSSL, see
-# https://boringssl.googlesource.com/boringssl/+/master/INCORPORATING.md#bazel
-git_repository(
-    name = "boringssl",
-    commit = "095d78b14f91cc9a910408eaae84a3bdafc54da9",  # 2019-06-05
-    remote = "https://boringssl.googlesource.com/boringssl",
-    shallow_since = "1559759280 +0000",
+workspace(name = "com_github_virustotal_yara")
+
+load("//:bazel/yara_deps.bzl", "yara_deps")
+yara_deps()
+
+
+load(
+    "@rules_proto//proto:repositories.bzl",
+    "rules_proto_dependencies", "rules_proto_toolchains"
 )
+rules_proto_dependencies()
+rules_proto_toolchains()
+
+load(
+    "@com_google_sandboxed_api//sandboxed_api/bazel:sapi_deps.bzl",
+    "sapi_deps",
+)
+sapi_deps()

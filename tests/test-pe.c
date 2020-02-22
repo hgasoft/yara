@@ -40,7 +40,7 @@ int main(int argc, char** argv)
       "import \"pe\" \
       rule test { \
         condition: \
-          pe.imports(/.*/, /.*CriticalSection/) \
+          pe.imports(/.*/, /.*CriticalSection/) == 4 \
       }",
       "tests/data/tiny");
 
@@ -48,7 +48,7 @@ int main(int argc, char** argv)
       "import \"pe\" \
       rule test { \
         condition: \
-          pe.imports(/kernel32\\.dll/i, /.*/) \
+          pe.imports(/kernel32\\.dll/i, /.*/) == 21 \
       }",
       "tests/data/tiny");
 
@@ -199,6 +199,14 @@ int main(int argc, char** argv)
       }",
       "tests/data/tiny");
 
+  assert_true_rule_file(
+      "import \"pe\" \
+      rule test { \
+        condition: \
+          pe.pdb_path == \"D:\\\\workspace\\\\2018_R9_RelBld\\\\target\\\\checkout\\\\custprof\\\\Release\\\\custprof.pdb\" \
+      }",
+       "tests/data/079a472d22290a94ebb212aa8015cdc8dd28a968c6b4d3b88acdd58ce2d3b885");
+
   assert_false_rule_file(
       "import \"pe\" \
       rule test { \
@@ -206,6 +214,29 @@ int main(int argc, char** argv)
           pe.checksum == pe.calculate_checksum() \
       }",
       "tests/data/tiny-idata-51ff");
+
+  assert_true_rule_file(
+      "import \"pe\" \
+      rule test { \
+        condition: \
+          pe.rich_signature.toolid(157, 40219) == 1 and \
+          pe.rich_signature.toolid(1, 0) > 40 and pe.rich_signature.toolid(1, 0) < 45 and \
+          pe.rich_signature.version(30319) and \
+          pe.rich_signature.version(40219, 170) == 11 \
+      }",
+      "tests/data/079a472d22290a94ebb212aa8015cdc8dd28a968c6b4d3b88acdd58ce2d3b885");
+
+  // This is the first 840 bytes (just enough to make sure the rich header is
+  // parsed) of 3593d3d08761d8ddc269dde945c0cb07e5cef5dd46ad9eefc22d17901f542093.
+  assert_true_rule_file(
+      "import \"pe\" \
+      rule test { \
+        condition: \
+          pe.rich_signature.offset == 0x200 and \
+          pe.rich_signature.length == 64 and \
+          pe.rich_signature.clear_data == \"DanS\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01\\x00\\x11\\x00\\x00\\x00\\xc3\\x0f]\\x00\\x03\\x00\\x00\\x00\\x09x\\x95\\x00\\x01\\x00\\x00\\x00\\x09x\\x83\\x00\\x05\\x00\\x00\\x00\\x09x\\x94\\x00\\x01\\x00\\x00\\x00\\x09x\\x91\\x00\\x01\\x00\\x00\\x00\" \
+      }",
+      "tests/data/weird_rich");
 
   yr_finalize();
   return 0;

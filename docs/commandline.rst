@@ -129,7 +129,7 @@ Available options are:
 
 .. option:: -r --recursive
 
-  Recursively search for directories.
+  Recursively search for directories. It follows symlinks.
 
 .. option:: -f --fast-scan
 
@@ -165,7 +165,7 @@ Here you have some examples:
 
 * Scan all files in the */foo* directory and its subdirectories::
 
-    yara -r /foo
+    yara /foo/bar/rules -r /foo
 
 * Defines three external variables *mybool*, *myint* and *mystring*::
 

@@ -179,6 +179,8 @@ octdigit      [0-7]
 "ascii"                 { return _ASCII_;       }
 "wide"                  { return _WIDE_;        }
 "xor"                   { return _XOR_;         }
+"base64"                { return _BASE64_;      }
+"base64wide"            { return _BASE64_WIDE_; }
 "fullword"              { return _FULLWORD_;    }
 "nocase"                { return _NOCASE_;      }
 "condition"             { return _CONDITION_;   }
@@ -704,7 +706,7 @@ u?int(8|16|32)(be)? {
 }
 
 
-\{(({hexdigit}|[ \-|\?\[\]\(\)\n\r\t]|\/\*[^*]*\*+([^*/][^*]*\*+)*\/)+|\/\/.*)+\}  {
+\{(({hexdigit}|[ \-|\?\[\]\(\)\n\r\t]|\/\*(\/|\**[^*/])*\*+\/)+|\/\/.*)+\}  {
   // Match hex-digits with whitespace or comments. The latter are stripped
   // out by hex_lexer.l
   // TODO(vmalvarez): Integrate the hex string lexer and parser into this one,
@@ -956,6 +958,7 @@ int yr_lex_parse_rules_fd(
 
   yyset_extra(compiler, yyscanner);
   yy_scan_bytes((const char*) buffer, (int) file_size, yyscanner);
+  yyset_lineno(1, yyscanner);
   yyparse(yyscanner, compiler);
   yylex_destroy(yyscanner);
 

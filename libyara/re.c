@@ -234,7 +234,7 @@ void yr_re_ast_destroy(
 // yr_re_parse
 //
 // Parses a regexp but don't emit its code. A further call to
-// yr_re_emit_code is required to get the code.
+// yr_re_ast_emit_code is required to get the code.
 //
 
 int yr_re_parse(
@@ -250,7 +250,7 @@ int yr_re_parse(
 // yr_re_parse_hex
 //
 // Parses a hex string but don't emit its code. A further call to
-// yr_re_emit_code is required to get the code.
+// yr_re_ast_emit_code is required to get the code.
 //
 
 int yr_re_parse_hex(
@@ -441,21 +441,66 @@ int yr_re_ast_contains_dot_star(
 //
 // yr_re_ast_split_at_chaining_point
 //
-// In some cases splitting a regular expression in two is more efficient that
-// having a single regular expression. This happens when the regular expression
-// contains a large repetition of any character, for example: /foo.{0,1000}bar/
-// In this case the regexp is split in /foo/ and /bar/ where /bar/ is "chained"
-// to /foo/. This means that /foo/ and /bar/ are handled as individual regexps
-// and when both matches YARA verifies if the distance between the matches
-// complies with the {0,1000} restriction.
-
-// This function traverses the regexp's tree looking for nodes where the regxp
-// should be split.
+// In some cases splitting a regular expression (or hex string) in two parts is
+// convenient for increasing performance. This happens when the pattern contains
+// a large gap (a.k.a jump), for example: { 01 02 03 [0-999] 04 05 06 }
+// In this case the string is splitted in { 01 02 03 } and { 04 05 06 } where
+// the latter is chained to the former. This means that { 01 02 03 } and
+// { 04 05 06 } are handled as individual strings, and when both of them are
+// found, YARA verifies if the distance between the matches complies with the
+// [0-999] restriction.
 //
+// This function traverses a regexp's AST looking for nodes where it should be
+// splitted. It must be noticed that this only applies to two-level ASTs (i.e.
+// an AST consisting in a RE_NODE_CONCAT at the root where all the children are
+// leaves).
+//
+// For example, { 01 02 03 [0-1000] 04 05 06 [500-2000] 07 08 09 } has the
+// following AST:
+//
+// RE_NODE_CONCAT
+// |
+// |- RE_NODE_LITERAL (01)
+// |- RE_NODE_LITERAL (02)
+// |- RE_NODE_LITERAL (03)
+// |- RE_NODE_RANGE_ANY (start=0, end=1000)
+// |- RE_NODE_LITERAL (04)
+// |- RE_NODE_LITERAL (05)
+// |- RE_NODE_LITERAL (06)
+// |- RE_NODE_RANGE_ANY (start=500, end=2000)
+// |- RE_NODE_LITERAL (07)
+// |- RE_NODE_LITERAL (08)
+// |- RE_NODE_LITERAL (09)
+//
+// If the AST above is passed in the re_ast argument, it will be trimmed to:
+//
+// RE_NODE_CONCAT
+// |
+// |- RE_NODE_LITERAL (01)
+// |- RE_NODE_LITERAL (02)
+// |- RE_NODE_LITERAL (03)
+//
+// While remainder_re_ast will be:
+//
+// RE_NODE_CONCAT
+// |
+// |- RE_NODE_LITERAL (04)
+// |- RE_NODE_LITERAL (05)
+// |- RE_NODE_LITERAL (06)
+// |- RE_NODE_RANGE_ANY (start=500, end=2000)
+// |- RE_NODE_LITERAL (07)
+// |- RE_NODE_LITERAL (08)
+// |- RE_NODE_LITERAL (09)
+//
+// The caller is responsible for freeing the new AST in remainder_re_ast by
+// calling yr_re_ast_destroy.
+//
+// The integers pointed to by min_gap and max_gap will be filled with the
+// minimum and maximum gap size between the sub-strings represented by the
+// two ASTs.
 
 int yr_re_ast_split_at_chaining_point(
     RE_AST* re_ast,
-    RE_AST** result_re_ast,
     RE_AST** remainder_re_ast,
     int32_t* min_gap,
     int32_t* max_gap)
@@ -465,7 +510,6 @@ int yr_re_ast_split_at_chaining_point(
 
   int result;
 
-  *result_re_ast = re_ast;
   *remainder_re_ast = NULL;
   *min_gap = 0;
   *max_gap = 0;
@@ -494,10 +538,10 @@ int yr_re_ast_split_at_chaining_point(
       if (concat == NULL)
         return ERROR_INSUFFICIENT_MEMORY;
 
-      concat->children_head = re_ast->root_node->children_head;
-      concat->children_tail = child->prev_sibling;
+      concat->children_head = child->next_sibling;
+      concat->children_tail = re_ast->root_node->children_tail;
 
-      re_ast->root_node->children_head = child->next_sibling;
+      re_ast->root_node->children_tail = child->prev_sibling;
 
       child->prev_sibling->next_sibling = NULL;
       child->next_sibling->prev_sibling = NULL;
@@ -505,8 +549,6 @@ int yr_re_ast_split_at_chaining_point(
       *min_gap = child->start;
       *max_gap = child->end;
 
-      (*result_re_ast)->root_node = re_ast->root_node;
-      (*result_re_ast)->flags = re_ast->flags;
       (*remainder_re_ast)->root_node = concat;
       (*remainder_re_ast)->flags = re_ast->flags;
 
@@ -2350,7 +2392,8 @@ int yr_re_fast_exec(
 
 
 static void _yr_re_print_node(
-    RE_NODE* re_node)
+    RE_NODE* re_node,
+    uint32_t indent)
 {
   RE_NODE* child;
   int i;
@@ -2358,14 +2401,16 @@ static void _yr_re_print_node(
   if (re_node == NULL)
     return;
 
+  if (indent > 0)
+    printf("\n%*s", indent, " ");
   switch (re_node->type)
   {
   case RE_NODE_ALT:
     printf("Alt(");
-    _yr_re_print_node(re_node->children_head);
-    printf(", ");
-    _yr_re_print_node(re_node->children_tail);
-    printf(")");
+    _yr_re_print_node(re_node->children_head, indent + 4);
+    printf(",");
+    _yr_re_print_node(re_node->children_tail, indent + 4);
+    printf("\n%*s%s", indent, " " , ")");
     break;
 
   case RE_NODE_CONCAT:
@@ -2373,27 +2418,27 @@ static void _yr_re_print_node(
     child = re_node->children_head;
     while (child != NULL)
     {
-      _yr_re_print_node(child);
-      printf(", ");
+      _yr_re_print_node(child, indent + 4);
+      printf(",");
       child = child->next_sibling;
     }
-    printf(")");
+    printf("\n%*s%s", indent, " ", ")");
     break;
 
   case RE_NODE_STAR:
     printf("Star(");
-    _yr_re_print_node(re_node->children_head);
+    _yr_re_print_node(re_node->children_head, indent + 4);
     printf(")");
     break;
 
   case RE_NODE_PLUS:
     printf("Plus(");
-    _yr_re_print_node(re_node->children_head);
+    _yr_re_print_node(re_node->children_head, indent + 4);
     printf(")");
     break;
 
   case RE_NODE_LITERAL:
-    printf("Lit(%02X)", re_node->value);
+    printf("Lit(%c)", re_node->value);
     break;
 
   case RE_NODE_MASKED_LITERAL:
@@ -2430,8 +2475,8 @@ static void _yr_re_print_node(
 
   case RE_NODE_RANGE:
     printf("Range(%d-%d, ", re_node->start, re_node->end);
-    _yr_re_print_node(re_node->children_head);
-    printf(")");
+    _yr_re_print_node(re_node->children_head, indent + 4);
+    printf("\n%*s%s", indent, " ", ")");
     break;
 
   case RE_NODE_CLASS:
@@ -2451,5 +2496,5 @@ static void _yr_re_print_node(
 void yr_re_print(
     RE_AST* re_ast)
 {
-  _yr_re_print_node(re_ast->root_node);
+  _yr_re_print_node(re_ast->root_node, 0);
 }
